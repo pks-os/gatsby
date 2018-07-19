@@ -69,6 +69,7 @@ exports.onPostBuild = (args, pluginOptions) => {
     })
 
   const options = {
+    importScripts: [`./prefetch-catcher.js`],
     staticFileGlobs: files.concat([
       `${rootDir}/index.html`,
       `${rootDir}/manifest.json`,
