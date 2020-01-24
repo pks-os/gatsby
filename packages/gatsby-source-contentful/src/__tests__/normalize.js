@@ -4,11 +4,9 @@ const {
   contentTypeItems,
   defaultLocale,
   locales,
+  space,
 } = require(`./data.json`)
 
-let entryList
-let resolvable
-let foreignReferenceMap
 const conflictFieldPrefix = `contentful_test`
 // restrictedNodeFields from here https://www.gatsbyjs.org/docs/node-interface/
 const restrictedNodeFields = [
@@ -20,7 +18,11 @@ const restrictedNodeFields = [
   `internal`,
 ]
 
-describe(`Process contentful data`, () => {
+describe(`Process contentful data (by name)`, () => {
+  let entryList
+  let resolvable
+  let foreignReferenceMap
+
   it(`builds entry list`, () => {
     entryList = normalize.buildEntryList({
       currentSyncData,
@@ -46,6 +48,8 @@ describe(`Process contentful data`, () => {
       resolvable,
       defaultLocale,
       locales,
+      space,
+      useNameForId: true,
     })
     expect(foreignReferenceMap).toMatchSnapshot()
   })
@@ -55,17 +59,20 @@ describe(`Process contentful data`, () => {
     const createNodeId = jest.fn()
     createNodeId.mockReturnValue(`uuid-from-gatsby`)
     contentTypeItems.forEach((contentTypeItem, i) => {
+      entryList[i].forEach(normalize.fixIds)
       normalize.createContentTypeNodes({
         contentTypeItem,
         restrictedNodeFields,
         conflictFieldPrefix,
-        entries: entryList[i].map(normalize.fixIds),
+        entries: entryList[i],
         createNode,
         createNodeId,
         resolvable,
         foreignReferenceMap,
         defaultLocale,
         locales,
+        space,
+        useNameForId: true,
       })
     })
     expect(createNode.mock.calls).toMatchSnapshot()
@@ -83,6 +90,86 @@ describe(`Process contentful data`, () => {
         createNodeId,
         defaultLocale,
         locales,
+        space,
+      })
+    })
+    expect(createNode.mock.calls).toMatchSnapshot()
+  })
+})
+
+describe(`Process contentful data (by id)`, () => {
+  let entryList
+  let resolvable
+  let foreignReferenceMap
+
+  it(`builds entry list`, () => {
+    entryList = normalize.buildEntryList({
+      currentSyncData,
+      contentTypeItems,
+    })
+    expect(entryList).toMatchSnapshot()
+  })
+
+  it(`builds list of resolvable data`, () => {
+    resolvable = normalize.buildResolvableSet({
+      assets: currentSyncData.assets,
+      entryList,
+      defaultLocale,
+      locales,
+    })
+    expect(resolvable).toMatchSnapshot()
+  })
+
+  it(`builds foreignReferenceMap`, () => {
+    foreignReferenceMap = normalize.buildForeignReferenceMap({
+      contentTypeItems,
+      entryList,
+      resolvable,
+      defaultLocale,
+      locales,
+      space,
+      useNameForId: false,
+    })
+    expect(foreignReferenceMap).toMatchSnapshot()
+  })
+
+  it(`creates nodes for each entry`, () => {
+    const createNode = jest.fn()
+    const createNodeId = jest.fn()
+    createNodeId.mockReturnValue(`uuid-from-gatsby`)
+    contentTypeItems.forEach((contentTypeItem, i) => {
+      entryList[i].forEach(normalize.fixIds)
+      normalize.createContentTypeNodes({
+        contentTypeItem,
+        restrictedNodeFields,
+        conflictFieldPrefix,
+        entries: entryList[i],
+        createNode,
+        createNodeId,
+        resolvable,
+        foreignReferenceMap,
+        defaultLocale,
+        locales,
+        space,
+        useNameForId: false,
+      })
+    })
+    expect(createNode.mock.calls).toMatchSnapshot()
+  })
+
+  it(`creates nodes for each asset`, () => {
+    const createNode = jest.fn()
+    const createNodeId = jest.fn()
+    createNodeId.mockReturnValue(`uuid-from-gatsby`)
+    const assets = currentSyncData.assets
+    assets.forEach(assetItem => {
+      normalize.createAssetNodes({
+        assetItem,
+        createNode,
+        createNodeId,
+        defaultLocale,
+        locales,
+        space,
       })
     })
     expect(createNode.mock.calls).toMatchSnapshot()
@@ -95,6 +182,110 @@ describe(`Fix contentful IDs`, () => {
   })
   it(`left pads ids that start with a number of a "c"`, () => {
     expect(normalize.fixId(`123`)).toEqual(`c123`)
+  })
+
+  describe(`cycles`, () => {
+    it(`should return undefined`, () => {
+      const a = {}
+      a.b = a
+      expect(normalize.fixIds(a)).toEqual(undefined)
+    })
+
+    it(`should not change cycles without sys`, () => {
+      const a = {}
+      a.b = a
+
+      const b = {}
+      b.b = b
+
+      normalize.fixIds(a)
+      expect(a).toEqual(b)
+    })
+
+    it(`cycle with sys + id`, () => {
+      const original = {
+        sys: {
+          id: 500,
+        },
+      }
+      original.b = original
+
+      const fixed = {
+        sys: {
+          contentful_id: 500,
+          id: `c500`,
+        },
+      }
+      fixed.b = fixed
+
+      expect(original).not.toEqual(fixed)
+      normalize.fixIds(original)
+      expect(original).toEqual(fixed)
+    })
+
+    it(`cycle with nested sys v1`, () => {
+      const original = {
+        sys: {
+          id: 500,
+          fii: {
+            sys: {
+              id: `300x`,
+            },
+          },
+        },
+      }
+      original.b = original
+
+      const fixed = {
+        sys: {
+          id: `c500`,
+          contentful_id: 500,
+          fii: {
+            sys: {
+              id: `c300x`,
+              contentful_id: `300x`,
+            },
+          },
+        },
+      }
+      fixed.b = fixed
+
+      expect(original).not.toEqual(fixed)
+      normalize.fixIds(original)
+      expect(original).toEqual(fixed)
+    })
+
+    it(`cycle with nested sys v2`, () => {
+      const original = {
+        sys: {
+          id: 500,
+          fii: {
+            sys: {
+              id: `300x`,
+            },
+          },
+        },
+      }
+      original.sys.fii.repeat = original
+
+      const fixed = {
+        sys: {
+          id: `c500`,
+          contentful_id: 500,
+          fii: {
+            sys: {
+              id: `c300x`,
+              contentful_id: `300x`,
+            },
+          },
+        },
+      }
+      fixed.sys.fii.repeat = fixed
+
+      expect(original).not.toEqual(fixed)
+      normalize.fixIds(original)
+      expect(original).toEqual(fixed)
+    })
   })
 })
 
@@ -161,10 +352,20 @@ describe(`Gets field value based on current locale`, () => {
         localesFallback,
         locale: {
           code: `gsw_CH`,
-          fallbackCode: `de`,
         },
       })
     ).toBe(field[`de`])
+  })
+  it(`returns null if passed a locale that doesn't have a field on a localized field`, () => {
+    expect(
+      normalize.getLocalizedField({
+        field,
+        localesFallback: { "es-ES": null, de: null },
+        locale: {
+          code: `es-US`,
+        },
+      })
+    ).toEqual(null)
   })
   it(`returns null if passed a locale that doesn't have a field nor a fallbackCode`, () => {
     expect(
@@ -173,7 +374,6 @@ describe(`Gets field value based on current locale`, () => {
         localesFallback,
         locale: {
           code: `es-US`,
-          fallbackCode: `null`,
         },
       })
     ).toEqual(null)
@@ -181,22 +381,24 @@ describe(`Gets field value based on current locale`, () => {
 })
 
 describe(`Make IDs`, () => {
-  it(`It doesn't postfix the id if its the default locale`, () => {
+  it(`It doesn't postfix the spaceId and the id if its the default locale`, () => {
     expect(
       normalize.makeId({
+        spaceId: `spaceId`,
         id: `id`,
         defaultLocale: `en-US`,
         currentLocale: `en-US`,
       })
-    ).toBe(`id`)
+    ).toBe(`spaceId___id`)
   })
-  it(`It does postfix the id if its not the default locale`, () => {
+  it(`It does postfix the spaceId and the id if its not the default locale`, () => {
     expect(
       normalize.makeId({
+        spaceId: `spaceId`,
         id: `id`,
         defaultLocale: `en-US`,
         currentLocale: `en-GB`,
       })
-    ).toBe(`id___en-GB`)
+    ).toBe(`spaceId___id___en-GB`)
   })
 })

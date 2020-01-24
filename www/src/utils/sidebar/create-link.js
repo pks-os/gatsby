@@ -1,176 +1,135 @@
-import Link from "gatsby-link"
-import React from "react"
-import presets, { colors } from "../presets"
-import { options, rhythm } from "../typography"
+/** @jsx jsx */
+import { jsx } from "theme-ui"
+import Link from "../../components/localized-link"
+
+import indention from "../../utils/sidebar/indention"
 
 const _getTitle = (title, isDraft) => (isDraft ? title.slice(0, -1) : title)
 const _isDraft = title => title.slice(-1) === `*`
 
-const createLinkDocs = ({
-  item,
-  isActive,
-  onLinkClick,
-  isParentOfActiveItem,
-  stepsUI,
-}) => {
-  const isDraft = _isDraft(item.title)
-  const title = _getTitle(item.title, isDraft)
-
-  return (
-    <Link
-      css={[
-        styles.link,
-        isDraft && styles.draft,
-        isActive && styles.activeLink,
-        isParentOfActiveItem && styles.parentOfActiveLink,
-      ]}
-      onClick={onLinkClick}
-      to={`${item.link}`}
-    >
-      {stepsUI && <span css={{ ...styles.subsectionLink }} />}
-      {title}
-    </Link>
-  )
-}
-
-const createLinkTutorial = ({
-  item,
-  onLinkClick,
-  isActive,
-  isParentOfActiveItem,
-  stepsUI,
-}) => {
-  const isDraft = _isDraft(item.title)
-  const title = _getTitle(item.title, isDraft)
-
-  return (
-    <Link
-      css={[
-        styles.link,
-        isDraft && styles.draft,
-        isActive && styles.activeLink,
-        isParentOfActiveItem && styles.parentOfActiveLink,
-      ]}
-      onClick={onLinkClick}
-      to={`${item.link}`}
-    >
-      {stepsUI && <span css={{ ...styles.subsectionLink }} />}
-      {title}
-    </Link>
-  )
-}
-
-const bulletOffset = {
-  default: {
-    left: `-1rem`,
-    top: `.6em`,
-  },
-  desktop: {
-    top: `.55em`,
-  },
-}
-
 const bulletSize = 8
+const bulletSizeActive = 100
+const bulletOffsetTop = `1.3em`
 
-const styles = {
-  draft: {
-    "&&": {
-      color: colors.gray.calm,
-      fontStyle: `italic`,
-    },
-  },
-  parentOfActiveLink: {
-    "&:after": {
-      display: `none`,
-    },
-    "&:before": {
-      display: `none`,
-    },
-  },
-  activeLink: {
-    "&&": {
-      color: colors.gatsby,
-    },
-    "&:before": {
-      background: colors.gatsby,
-      transform: `scale(1)`,
-    },
-    "&:after": {
-      width: 200,
-      opacity: 1,
-    },
-  },
-  link: {
-    display: `block`,
-    paddingTop: rhythm(1 / 8),
-    paddingBottom: rhythm(1 / 8),
-    position: `relative`,
-    zIndex: 1,
-    "&&": {
-      border: 0,
-      boxShadow: `none`,
-      fontFamily: options.systemFontFamily.join(`,`),
-      fontWeight: `normal`,
-      "&:hover": {
-        background: `transparent`,
-        color: colors.gatsby,
+const createLink = ({
+  item,
+  onLinkClick,
+  isActive,
+  isParentOfActiveItem,
+  ui,
+  overrideCSS,
+  level,
+}) => {
+  const isDraft = _isDraft(item.title)
+  const title = _getTitle(item.title, isDraft)
+  const indent = ui === `steps` ? indention(level + 1) : indention(level)
+
+  return (
+    <span
+      sx={{
+        alignItems: `center`,
+        display: `flex`,
+        position: `relative`,
         "&:before": {
-          background: colors.gatsby,
-          transform: `scale(1)`,
+          bg: `sidebar.itemBorderColor`,
+          bottom: 0,
+          content: `''`,
+          height: 1,
+          left: indent,
+          position: `absolute`,
+          right: 0,
+          top: `auto`,
         },
-      },
-    },
-    "&:before": {
-      ...bulletOffset.default,
-      borderRadius: `100%`,
-      content: ` `,
-      fontWeight: `normal`,
-      height: bulletSize,
-      position: `absolute`,
-      transform: `scale(0.1)`,
-      transition: `all ${presets.animation.speedDefault} ${
-        presets.animation.curveDefault
-      }`,
-      width: bulletSize,
-      [presets.Tablet]: {
-        ...bulletOffset.desktop,
-      },
-    },
-    "&:after": {
-      ...bulletOffset.default,
-      background: colors.gatsby,
-      borderRadius: 4,
-      content: ` `,
-      height: bulletSize,
-      left: `-0.6rem`,
-      opacity: 0,
-      position: `absolute`,
-      transform: `translateX(-200px)`,
-      transition: `all ${presets.animation.speedDefault} ${
-        presets.animation.curveDefault
-      }`,
-      width: 1,
-      [presets.Tablet]: {
-        ...bulletOffset.desktop,
-        left: `-0.6rem`,
-      },
-    },
-  },
-  subsectionLink: {
-    ...bulletOffset.default,
-    background: `#fff`,
-    border: `1px solid ${colors.ui.bright}`,
-    borderRadius: `100%`,
-    display: `block`,
-    fontWeight: `normal`,
-    height: bulletSize,
-    position: `absolute`,
-    width: bulletSize,
-    zIndex: -1,
-    [presets.Tablet]: {
-      ...bulletOffset.desktop,
-    },
-  },
+      }}
+    >
+      <Link
+        sx={{
+          minHeight: `sidebarItemMinHeight`,
+          position: `relative`,
+          pl: indent,
+          pr: 4,
+          py: 3,
+          textDecoration: `none`,
+          width: `100%`,
+          zIndex: 1,
+          "&&": {
+            border: 0,
+            color: `navigation.linkDefault`,
+            fontWeight: `body`,
+            ...(isDraft && {
+              color: `textMuted`,
+            }),
+            ...(isActive && {
+              color: `link.color`,
+              fontWeight: `medium`,
+            }),
+            ...(isParentOfActiveItem && {
+              bg: `sidebar.itemBackgroundActive`,
+              color: `link.color`,
+              fontWeight: `medium`,
+            }),
+            "&:hover": {
+              bg: `sidebar.itemHoverBackground`,
+              color: `navigation.linkHover`,
+              "&:before": {
+                bg: `link.color`,
+                transform: `scale(1)`,
+              },
+            },
+            ...overrideCSS,
+          },
+          "&:before, &:after": {
+            content: `''`,
+            left: t =>
+              level === 0 || (level === 1 && ui !== `steps`)
+                ? `calc(${indent} - ${t.space[4]})`
+                : `calc(${indent} - ${t.space[6]})`,
+            top: bulletOffsetTop,
+            height: bulletSize,
+            position: `absolute`,
+            transition: t =>
+              `all ${t.transition.speed.default} ${t.transition.curve.default}`,
+            width: bulletSize,
+          },
+          "&:before": {
+            bg: isActive ? `link.color` : false,
+            borderRadius: 6,
+            transform: isActive ? `scale(1)` : `scale(0.1)`,
+          },
+          "&:after": {
+            bg: `link.color`,
+            borderRadius: 2,
+            opacity: isActive ? 1 : 0,
+            transform: `translateX(-${bulletSizeActive - bulletSize}px)`,
+            width: isActive ? bulletSizeActive : 0,
+          },
+        }}
+        onClick={onLinkClick}
+        to={item.link}
+      >
+        {ui === `steps` && (
+          <span
+            sx={{
+              bg: `white`,
+              borderColor: `ui.border`,
+              borderRadius: 6,
+              borderStyle: `solid`,
+              borderWidth: `1px`,
+              display: `block`,
+              fontWeight: `body`,
+              height: bulletSize,
+              left: 6,
+              position: `absolute`,
+              top: bulletOffsetTop,
+              width: bulletSize,
+              zIndex: -1,
+            }}
+          />
+        )}
+        {title}
+      </Link>
+    </span>
+  )
 }
 
-export { createLinkDocs, createLinkTutorial }
+export default createLink

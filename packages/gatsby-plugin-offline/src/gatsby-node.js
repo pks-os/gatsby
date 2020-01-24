@@ -1,9 +1,12 @@
-const fs = require(`fs`)
-const precache = require(`sw-precache`)
+// use `let` to workaround https://github.com/jhnns/rewire/issues/144
+let fs = require(`fs`)
+let workboxBuild = require(`workbox-build`)
 const path = require(`path`)
-const slash = require(`slash`)
+const { slash } = require(`gatsby-core-utils`)
+const glob = require(`glob`)
 const _ = require(`lodash`)
-const cheerio = require(`cheerio`)
+
+let getResourcesFromHTML = require(`./get-resources-from-html`)
 
 exports.createPages = ({ actions }) => {
   if (process.env.NODE_ENV === `production`) {
@@ -27,84 +30,173 @@ const readStats = () => {
   }
 }
 
-const getAssetsForChunks = (chunks, rootDir) =>
-  _.flatten(chunks.map(chunk => readStats().assetsByChunkName[chunk])).map(
-    assetFileName => `${rootDir}/${assetFileName}`
+function getAssetsForChunks(chunks) {
+  const files = _.flatten(
+    chunks.map(chunk => readStats().assetsByChunkName[chunk])
   )
+  return _.compact(files)
+}
 
-exports.onPostBuild = (args, pluginOptions) => {
+function getPrecachePages(globs, base) {
+  const precachePages = []
+
+  globs.forEach(page => {
+    const matches = glob.sync(base + page)
+    matches.forEach(path => {
+      const isDirectory = fs.lstatSync(path).isDirectory()
+      let precachePath
+
+      if (isDirectory && fs.existsSync(`${path}/index.html`)) {
+        precachePath = `${path}/index.html`
+      } else if (path.endsWith(`.html`)) {
+        precachePath = path
+      } else {
+        return
+      }
+
+      if (precachePages.indexOf(precachePath) === -1) {
+        precachePages.push(precachePath)
+      }
+    })
+  })
+
+  return precachePages
+}
+
+exports.onPostBuild = (
+  args,
+  {
+    precachePages: precachePagesGlobs = [],
+    appendScript = null,
+    debug = undefined,
+    workboxConfig = {},
+  }
+) => {
+  const { pathPrefix, reporter } = args
   const rootDir = `public`
 
   // Get exact asset filenames for app and offline app shell chunks
-  const files = getAssetsForChunks(
-    [
-      `app`,
-      `webpack-runtime`,
-      `component---node-modules-gatsby-plugin-offline-app-shell-js`,
-    ],
-    rootDir
+  const files = getAssetsForChunks([
+    `app`,
+    `webpack-runtime`,
+    `component---node-modules-gatsby-plugin-offline-app-shell-js`,
+  ])
+  const appFile = files.find(file => file.startsWith(`app-`))
+
+  function flat(arr) {
+    return Array.prototype.flat ? arr.flat() : [].concat(...arr)
+  }
+
+  const offlineShellPath = `${process.cwd()}/${rootDir}/offline-plugin-app-shell-fallback/index.html`
+  const precachePages = [
+    offlineShellPath,
+    ...getPrecachePages(
+      precachePagesGlobs,
+      `${process.cwd()}/${rootDir}`
+    ).filter(page => page !== offlineShellPath),
+  ]
+
+  const criticalFilePaths = _.uniq(
+    flat(precachePages.map(page => getResourcesFromHTML(page, pathPrefix)))
   )
 
-  // load index.html to pull scripts/links necessary for proper offline reload
-  const html = fs.readFileSync(
-    path.resolve(`${process.cwd()}/${rootDir}/index.html`)
-  )
+  const globPatterns = files.concat([
+    // criticalFilePaths doesn't include HTML pages (we only need this one)
+    `offline-plugin-app-shell-fallback/index.html`,
+    ...criticalFilePaths,
+  ])
 
-  // party like it's 2006
-  const $ = cheerio.load(html)
-
-  // holds any paths for scripts and links
-  const criticalFilePaths = []
-
-  $(`script`)
-    .filter((_, elem) => $(elem).attr(`src`) !== undefined)
-    .each((_, elem) => {
-      criticalFilePaths.push(`${rootDir}${$(elem).attr(`src`)}`)
-    })
-
-  $(`link`)
-    .filter((_, elem) => $(elem).attr(`as`) !== `script`)
-    .each((_, elem) => {
-      criticalFilePaths.push(`${rootDir}${$(elem).attr(`href`)}`)
-    })
+  const manifests = [`manifest.json`, `manifest.webmanifest`]
+  manifests.forEach(file => {
+    if (fs.existsSync(`${rootDir}/${file}`)) globPatterns.push(file)
+  })
 
   const options = {
-    staticFileGlobs: files.concat([
-      `${rootDir}/index.html`,
-      `${rootDir}/manifest.json`,
-      `${rootDir}/manifest.webmanifest`,
-      `${rootDir}/offline-plugin-app-shell-fallback/index.html`,
-      ...criticalFilePaths,
-    ]),
-    stripPrefix: rootDir,
-    // If `pathPrefix` is configured by user, we should replace
-    // the `public` prefix with `pathPrefix`.
-    // See more at:
-    // https://github.com/GoogleChrome/sw-precache#replaceprefix-string
-    replacePrefix: args.pathPrefix || ``,
-    navigateFallback: `/offline-plugin-app-shell-fallback/index.html`,
-    // Only match URLs without extensions.
-    // So example.com/about/ will pass but
-    // example.com/cheeseburger.jpg will not.
-    // We only want the service worker to handle our "clean"
-    // URLs and not any files hosted on the site.
-    //
-    // Regex from http://stackoverflow.com/a/18017805
-    navigateFallbackWhitelist: [/^.*([^.]{5}|.html)$/],
+    importWorkboxFrom: `local`,
+    globDirectory: rootDir,
+    globPatterns,
+    modifyURLPrefix: {
+      // If `pathPrefix` is configured by user, we should replace
+      // the default prefix with `pathPrefix`.
+      "/": `${pathPrefix}/`,
+    },
     cacheId: `gatsby-plugin-offline`,
-    // Don't cache-bust JS files and anything in the static directory
-    dontCacheBustUrlsMatching: /(.*js$|\/static\/)/,
+    // Don't cache-bust JS or CSS files, and anything in the static directory,
+    // since these files have unique URLs and their contents will never change
+    dontCacheBustURLsMatching: /(\.js$|\.css$|static\/)/,
     runtimeCaching: [
       {
-        // Add runtime caching of images.
-        urlPattern: /\.(?:png|jpg|jpeg|webp|svg|gif|tiff|js|woff|woff2)$/,
-        handler: `fastest`,
+        // Use cacheFirst since these don't need to be revalidated (same RegExp
+        // and same reason as above)
+        urlPattern: /(\.js$|\.css$|static\/)/,
+        handler: `CacheFirst`,
+      },
+      {
+        // page-data.json files are not content hashed
+        urlPattern: /^https?:.*\page-data\/.*\/page-data\.json/,
+        handler: `StaleWhileRevalidate`,
+      },
+      {
+        // Add runtime caching of various other page resources
+        urlPattern: /^https?:.*\.(png|jpg|jpeg|webp|svg|gif|tiff|js|woff|woff2|json|css)$/,
+        handler: `StaleWhileRevalidate`,
+      },
+      {
+        // Google Fonts CSS (doesn't end in .css so we need to specify it)
+        urlPattern: /^https?:\/\/fonts\.googleapis\.com\/css/,
+        handler: `StaleWhileRevalidate`,
       },
     ],
     skipWaiting: true,
+    clientsClaim: true,
   }
 
-  const combinedOptions = _.defaults(pluginOptions, options)
+  const combinedOptions = _.merge(options, workboxConfig)
 
-  return precache.write(`public/sw.js`, combinedOptions)
+  const idbKeyvalFile = `idb-keyval-iife.min.js`
+  const idbKeyvalSource = require.resolve(`idb-keyval/dist/${idbKeyvalFile}`)
+  const idbKeyvalDest = `public/${idbKeyvalFile}`
+  fs.createReadStream(idbKeyvalSource).pipe(fs.createWriteStream(idbKeyvalDest))
+
+  const swDest = `public/sw.js`
+  return workboxBuild
+    .generateSW({ swDest, ...combinedOptions })
+    .then(({ count, size, warnings }) => {
+      if (warnings) warnings.forEach(warning => console.warn(warning))
+
+      if (debug !== undefined) {
+        const swText = fs
+          .readFileSync(swDest, `utf8`)
+          .replace(
+            /(workbox\.setConfig\({modulePathPrefix: "[^"]+")}\);/,
+            `$1, debug: ${JSON.stringify(debug)}});`
+          )
+        fs.writeFileSync(swDest, swText)
+      }
+
+      const swAppend = fs
+        .readFileSync(`${__dirname}/sw-append.js`, `utf8`)
+        .replace(/%pathPrefix%/g, pathPrefix)
+        .replace(/%appFile%/g, appFile)
+
+      fs.appendFileSync(`public/sw.js`, `\n` + swAppend)
+
+      if (appendScript !== null) {
+        let userAppend
+        try {
+          userAppend = fs.readFileSync(appendScript, `utf8`)
+        } catch (e) {
+          throw new Error(`Couldn't find the specified offline inject script`)
+        }
+        fs.appendFileSync(`public/sw.js`, `\n` + userAppend)
+      }
+
+      reporter.info(
+        `Generated ${swDest}, which will precache ${count} files, totaling ${size} bytes.\n` +
+          `The following pages will be precached:\n` +
+          precachePages
+            .map(path => path.replace(`${process.cwd()}/public`, ``))
+            .join(`\n`)
+      )
+    })
 }

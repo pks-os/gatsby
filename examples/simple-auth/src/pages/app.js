@@ -1,8 +1,8 @@
 import React from "react"
-import { Route } from "react-router-dom"
+import { Router } from "@reach/router"
 import Layout from "../components/Layout"
+import Profile from "../components/Profile"
 import Details from "../components/Details"
-import Home from "../components/Home"
 import Login from "../components/Login"
 import PrivateRoute from "../components/PrivateRoute"
 import Status from "../components/Status"
@@ -10,9 +10,11 @@ import Status from "../components/Status"
 const App = () => (
   <Layout>
     <Status />
-    <PrivateRoute path="/app/profile" component={Home} />
-    <PrivateRoute path="/app/details" component={Details} />
-    <Route path="/app/login" component={Login} />
+    <Router>
+      <PrivateRoute path="/app/details" component={Details} />
+      <PrivateRoute path="/app/profile" component={Profile} />
+      <Login path="/app/login" />
+    </Router>
   </Layout>
 )
 

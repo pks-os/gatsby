@@ -1,81 +1,85 @@
-import React, { Fragment } from "react"
+import React, { Fragment, useCallback } from "react"
 
 import Accordion from "./accordion"
-import presets from "../../utils/presets"
-import { scale, rhythm } from "../../utils/typography"
+import createLink from "../../utils/sidebar/create-link"
 
-class Item extends React.Component {
-  render() {
-    const {
-      createLink,
-      location,
-      onLinkClick,
-      onSectionTitleClick,
-      item,
-      hideSectionTitle,
-      singleSection,
-      activeItemLink,
-      isFirstItem,
-      isLastItem,
-    } = this.props
-
-    return (
-      <Fragment>
-        {item.items ? (
-          <Accordion
-            itemStyles={styles}
-            isActive={this.props.isActive || item.disableAccordions}
-            onSectionTitleClick={onSectionTitleClick}
-            hideSectionTitle={hideSectionTitle}
-            singleSection={singleSection}
-            item={item}
-            activeItemLink={activeItemLink}
-            createLink={createLink}
-            location={location}
-            isFirstItem={isFirstItem}
-            isLastItem={isLastItem}
-          />
-        ) : (
-          <div
-            className="item"
-            css={{
-              ...styles.item,
-            }}
-          >
-            {createLink({
-              isActive: item.link === activeItemLink,
-              item: item,
-              item,
-              location,
-              onLinkClick,
-            })}
-          </div>
-        )}
-      </Fragment>
-    )
+const isItemActive = (activeItemParents, item) => {
+  if (activeItemParents) {
+    for (let parent of activeItemParents) {
+      if (parent === item.title) return true
+    }
   }
+
+  return false
+}
+
+const Item = ({
+  activeItemLink,
+  activeItemParents,
+  isActive,
+  openSectionHash,
+  item,
+  location,
+  onLinkClick,
+  onSectionTitleClick,
+  ui,
+  isSingle,
+  disableAccordions,
+}) => {
+  const itemRef = useCallback(
+    async node => {
+      if (item.link === activeItemLink.link && node !== null) {
+        // this noop for whatever reason gives time for React to know what
+        // ref is attached to the node to scroll to it, removing this line
+        // will only scroll to the correct location on a full page refresh,
+        // instead of navigating between pages with the prev/next buttons
+        // or clicking on linking guides or urls
+        await function() {}
+        node.scrollIntoView({ block: `center` })
+      }
+    },
+    [location.pathname]
+  )
+
+  const isParentOfActiveItem = isItemActive(activeItemParents, item)
+
+  return (
+    <Fragment>
+      {item.items ? (
+        <Accordion
+          itemRef={itemRef}
+          activeItemLink={activeItemLink}
+          activeItemParents={activeItemParents}
+          createLink={createLink}
+          isActive={
+            isActive ||
+            item.link === location.pathname ||
+            isParentOfActiveItem ||
+            item.disableAccordions
+          }
+          isParentOfActiveItem={isParentOfActiveItem}
+          item={item}
+          location={location}
+          onLinkClick={onLinkClick}
+          openSectionHash={openSectionHash}
+          onSectionTitleClick={onSectionTitleClick}
+          isSingle={isSingle}
+          disableAccordions={disableAccordions}
+        />
+      ) : (
+        <li ref={itemRef}>
+          {createLink({
+            isActive: item.link === activeItemLink.link,
+            item,
+            location,
+            onLinkClick,
+            ui,
+            level: item.level,
+          })}
+        </li>
+      )}
+    </Fragment>
+  )
 }
 
 export default Item
-
-const horizontalPadding = rhythm(3 / 4)
-const horizontalPaddingDesktop = rhythm(3 / 2)
-const styles = {
-  item: {
-    lineHeight: 1.3,
-    margin: 0,
-    paddingLeft: horizontalPadding,
-    paddingRight: horizontalPadding,
-    fontSize: scale(-1 / 10).fontSize,
-    [presets.Phablet]: {
-      fontSize: scale(-2 / 10).fontSize,
-    },
-    [presets.Tablet]: {
-      fontSize: scale(-4 / 10).fontSize,
-    },
-    [presets.Desktop]: {
-      paddingLeft: horizontalPaddingDesktop,
-      paddingRight: horizontalPaddingDesktop,
-    },
-  },
-}

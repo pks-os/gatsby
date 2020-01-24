@@ -27,7 +27,9 @@ try {
 Html = Html && Html.__esModule ? Html.default : Html
 
 export default (pagePath, callback) => {
-  let headComponents = []
+  let headComponents = [
+    <meta key="environment" name="note" content="environment=development" />,
+  ]
   let htmlAttributes = {}
   let bodyAttributes = {}
   let preBodyComponents = []
@@ -59,6 +61,24 @@ export default (pagePath, callback) => {
     bodyProps = merge({}, bodyProps, props)
   }
 
+  const getHeadComponents = () => headComponents
+
+  const replaceHeadComponents = components => {
+    headComponents = components
+  }
+
+  const getPreBodyComponents = () => preBodyComponents
+
+  const replacePreBodyComponents = components => {
+    preBodyComponents = components
+  }
+
+  const getPostBodyComponents = () => postBodyComponents
+
+  const replacePostBodyComponents = components => {
+    postBodyComponents = components
+  }
+
   apiRunner(`onRenderBody`, {
     setHeadComponents,
     setHtmlAttributes,
@@ -66,6 +86,17 @@ export default (pagePath, callback) => {
     setPreBodyComponents,
     setPostBodyComponents,
     setBodyProps,
+    pathname: pagePath,
+  })
+
+  apiRunner(`onPreRenderHTML`, {
+    getHeadComponents,
+    replaceHeadComponents,
+    getPreBodyComponents,
+    replacePreBodyComponents,
+    getPostBodyComponents,
+    replacePostBodyComponents,
+    pathname: pagePath,
   })
 
   const htmlElement = React.createElement(Html, {
@@ -74,6 +105,8 @@ export default (pagePath, callback) => {
     headComponents: headComponents.concat([
       <script key={`io`} src="/socket.io/socket.io.js" />,
     ]),
+    htmlAttributes,
+    bodyAttributes,
     preBodyComponents,
     postBodyComponents: postBodyComponents.concat([
       <script key={`commons`} src="/commons.js" />,

@@ -35,15 +35,11 @@ Browserslist — https://css-tricks.com/browserlist-good-idea/
 
 By default, Gatsby emulates the following config:
 
-```javascript
-// package.json
+```json:title=package.json
 {
- "browserslist": [
-   ">0.25%",
-   "not dead"
- ]
+  "browserslist": [">0.25%", "not dead"]
 }
 ```
 
-If you only support newer browsers then make sure to specify this in your
-package.json as you'll often be able then to ship smaller JavaScript files.
+If you only support newer browsers, make sure to specify this in your
+`package.json`. This will often enable you to ship smaller JavaScript files.

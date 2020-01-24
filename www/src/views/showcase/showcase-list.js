@@ -1,116 +1,130 @@
-import React from "react"
+/** @jsx jsx */
+import { jsx } from "theme-ui"
+import { Fragment } from "react"
 import { Link } from "gatsby"
-import Img from "gatsby-image"
-import hex2rgba from "hex2rgba"
-import { style } from "glamor"
 
-import { options, scale, rhythm } from "../../utils/typography"
-import presets, { colors } from "../../utils/presets"
+import {
+  showcaseList,
+  showcaseItem,
+  shortcutIcon,
+  meta,
+} from "../shared/styles"
+import ThumbnailLink from "../shared/thumbnail"
+import EmptyGridItems from "../shared/empty-grid-items"
+import qs from "qs"
 
-const ShowcaseList = ({ items, count }) => {
+import ShowcaseItemCategories from "./showcase-item-categories"
+import { mediaQueries } from "../../gatsby-plugin-theme-ui"
+
+import GithubIcon from "react-icons/lib/go/mark-github"
+import LaunchSiteIcon from "react-icons/lib/md/launch"
+import FeaturedIcon from "../../assets/icons/featured-sites-icons"
+
+const ShowcaseList = ({ items, count, filters, onCategoryClick }) => {
   if (count) items = items.slice(0, count)
 
   return (
-    <div
-      css={{
-        display: `flex`,
-        flexWrap: `wrap`,
-        padding: rhythm(3 / 4),
-        justifyContent: `center`,
-        [presets.Desktop]: {
-          justifyContent: `flex-start`,
-        },
-      }}
-    >
+    <main id={`reach-skip-nav`} sx={showcaseList}>
       {items.map(
         ({ node }) =>
           node.fields &&
           node.fields.slug && ( // have to filter out null fields from bad data
-            <Link
-              key={node.id}
-              to={{ pathname: node.fields.slug, state: { isModal: true } }}
-              {...styles.withTitleHover}
-              css={{
-                margin: rhythm(3 / 4),
-                width: 280,
-                "&&": {
-                  borderBottom: `none`,
-                  boxShadow: `none`,
-                  transition: `all ${presets.animation.speedDefault} ${
-                    presets.animation.curveDefault
-                  }`,
-                  "&:hover": {
-                    ...styles.screenshotHover,
-                  },
-                },
-              }}
-            >
-              {node.childScreenshot ? (
-                <Img
-                  resolutions={
-                    node.childScreenshot.screenshotFile.childImageSharp
-                      .resolutions
-                  }
-                  alt={`Screenshot of ${node.title}`}
-                  css={{
-                    ...styles.screenshot,
-                  }}
-                />
-              ) : (
-                <div
-                  css={{
-                    width: 320,
-                    backgroundColor: `#d999e7`,
-                  }}
-                >
-                  missing
-                </div>
-              )}
-              <div>
-                <span className="title">{node.title}</span>
-              </div>
-              <div
-                css={{
-                  ...scale(-2 / 5),
-                  color: `#9B9B9B`,
-                  fontWeight: `normal`,
-                }}
+            <div key={node.id} sx={showcaseItem}>
+              <ThumbnailLink
+                slug={node.fields.slug}
+                image={node.childScreenshot}
+                title={node.title}
+                state={{ filters }}
               >
-                {node.categories && node.categories.join(`, `)}
+                <strong className="title">{node.title}</strong>
+              </ThumbnailLink>
+              <div
+                sx={{
+                  ...meta,
+                  display: `flex`,
+                  justifyContent: `space-between`,
+                }}
+                className="meta"
+              >
+                <div sx={{ pr: 5 }}>
+                  <ShowcaseItemCategories
+                    categories={node.categories}
+                    onCategoryClick={onCategoryClick}
+                  />
+                </div>
+                <div css={{ flex: `0 0 auto`, textAlign: `right` }}>
+                  {node.source_url && (
+                    <Fragment>
+                      <a
+                        sx={shortcutIcon}
+                        href={node.source_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Open source code for ${node.title}`}
+                      >
+                        <GithubIcon style={{ verticalAlign: `text-top` }} />
+                      </a>
+                      {` `}
+                    </Fragment>
+                  )}
+                  <a
+                    sx={shortcutIcon}
+                    href={node.main_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Open website for ${node.title}`}
+                  >
+                    <LaunchSiteIcon style={{ verticalAlign: `text-top` }} />
+                  </a>
+                </div>
+                {node.featured && (
+                  <Link
+                    sx={{
+                      "&&": {
+                        display: `none`,
+                        [mediaQueries.lg]: {
+                          alignItems: `center`,
+                          bg: `accent`,
+                          border: `none`,
+                          borderTopRightRadius: 1,
+                          borderBottomLeftRadius: 1,
+                          boxShadow: `none`,
+                          color: `white`,
+                          cursor: `pointer`,
+                          display: `flex`,
+                          fontSize: 2,
+                          justifyContent: `center`,
+                          height: 20,
+                          margin: 0,
+                          padding: 0,
+                          position: `absolute`,
+                          top: 0,
+                          right: 0,
+                          width: 20,
+                          "&:hover": {
+                            bg: `gatsby`,
+                          },
+                          "& svg": {
+                            display: `block`,
+                          },
+                        },
+                      },
+                    }}
+                    to={`/showcase/?${qs.stringify({
+                      filters: `Featured`,
+                    })}`}
+                    className="featured-site"
+                  >
+                    <FeaturedIcon />
+                  </Link>
+                )}
               </div>
-            </Link>
+            </div>
           )
       )}
-    </div>
+      {items.length && <EmptyGridItems styles={showcaseItem} />}
+    </main>
   )
 }
 
 export default ShowcaseList
-
-const styles = {
-  withTitleHover: style({
-    "& .title": {
-      transition: `box-shadow .3s cubic-bezier(.4,0,.2,1), transform .3s cubic-bezier(.4,0,.2,1)`,
-      boxShadow: `inset 0 0px 0px 0px ${colors.ui.whisper}`,
-    },
-    "&:hover .title": {
-      boxShadow: `inset 0 -3px 0px 0px ${colors.ui.bright}`,
-    },
-  }),
-  screenshot: {
-    borderRadius: presets.radius,
-    boxShadow: `0 4px 10px ${hex2rgba(colors.gatsby, 0.1)}`,
-    marginBottom: rhythm(options.blockMarginBottom / 2),
-    transition: `all ${presets.animation.speedDefault} ${
-      presets.animation.curveDefault
-    }`,
-  },
-  screenshotHover: {
-    background: `transparent`,
-    color: colors.gatsby,
-    "& .gatsby-image-wrapper": {
-      transform: `translateY(-3px)`,
-      boxShadow: `0 8px 20px ${hex2rgba(colors.lilac, 0.5)}`,
-    },
-  },
-}

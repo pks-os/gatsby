@@ -1,13 +1,16 @@
 // @flow
-const os = require(`os`)
 
 const autoprefixer = require(`autoprefixer`)
 const flexbugs = require(`postcss-flexbugs-fixes`)
-const UglifyPlugin = require(`uglifyjs-webpack-plugin`)
+const TerserPlugin = require(`terser-webpack-plugin`)
 const MiniCssExtractPlugin = require(`mini-css-extract-plugin`)
+const OptimizeCssAssetsPlugin = require(`optimize-css-assets-webpack-plugin`)
+const isWsl = require(`is-wsl`)
+
+const GatsbyWebpackStatsExtractor = require(`./gatsby-webpack-stats-extractor`)
+const GatsbyWebpackEslintGraphqlSchemaReload = require(`./gatsby-webpack-eslint-graphql-schema-reload-plugin`)
 
 const builtinPlugins = require(`./webpack-plugins`)
-const { createBabelConfig } = require(`./babel-config`)
 const eslintConfig = require(`./eslint-config`)
 
 type LoaderSpec = string | { loader: string, options?: Object }
@@ -55,13 +58,12 @@ export type LoaderUtils = {
   postcss: LoaderResolver<{
     browsers?: string[],
     plugins?: Array<any> | ((loader: any) => Array<any>),
-    minimze?: boolean,
-    cssnano?: any,
   }>,
 
   file: LoaderResolver<*>,
   url: LoaderResolver<*>,
   js: LoaderResolver<*>,
+  dependencies: LoaderResovler<*>,
 
   miniCssExtract: LoaderResolver<*>,
   imports: LoaderResolver<*>,
@@ -71,11 +73,11 @@ export type LoaderUtils = {
 }
 
 /**
- * Utils that prodcue webpack rule objects
+ * Utils that produce webpack rule objects
  */
 export type RuleUtils = {
   /**
-   * Handles Javascript compilation via babel
+   * Handles JavaScript compilation via babel
    */
   js: RuleFactory<*>,
   yaml: RuleFactory<*>,
@@ -94,6 +96,7 @@ export type PluginUtils = BuiltinPlugins & {
   extractText: PluginFactory,
   uglify: PluginFactory,
   moment: PluginFactory,
+  extractStats: PluginFactory,
 }
 
 /**
@@ -119,11 +122,9 @@ module.exports = async ({
 }): Promise<WebpackUtilsOptions> => {
   const assetRelativeRoot = `static/`
   const vendorRegex = /(node_modules|bower_components)/
-  const supportedBrowsers = program.browserlist
+  const supportedBrowsers = program.browserslist
 
   const PRODUCTION = !stage.includes(`develop`)
-
-  const babelConfig = await createBabelConfig(program, stage)
 
   const isSSR = stage.includes(`html`)
 
@@ -208,10 +209,8 @@ module.exports = async ({
 
     postcss: (options = {}) => {
       let {
-        cssnano,
         plugins,
-        browsers = supportedBrowsers,
-        minimze = PRODUCTION,
+        overrideBrowserslist = supportedBrowsers,
         ...postcssOpts
       } = options
 
@@ -225,11 +224,10 @@ module.exports = async ({
               (typeof plugins === `function` ? plugins(loader) : plugins) || []
 
             return [
-              minimze && require(`cssnano`)(cssnano),
               flexbugs,
-              autoprefixer({ browsers, flexbox: `no-2009` }),
+              autoprefixer({ overrideBrowserslist, flexbox: `no-2009` }),
               ...plugins,
-            ].filter(Boolean)
+            ]
           },
           ...postcssOpts,
         },
@@ -238,7 +236,7 @@ module.exports = async ({
 
     file: (options = {}) => {
       return {
-        loader: require.resolve(`url-loader`),
+        loader: require.resolve(`file-loader`),
         options: {
           name: `${assetRelativeRoot}[name]-[hash].[ext]`,
           ...options,
@@ -257,7 +255,17 @@ module.exports = async ({
       }
     },
 
-    js: (options = babelConfig) => {
+    js: options => {
+      return {
+        options: {
+          stage,
+          ...options,
+        },
+        loader: require.resolve(`./babel-loader`),
+      }
+    },
+
+    dependencies: options => {
       return {
         options,
         loader: require.resolve(`babel-loader`),
@@ -294,18 +302,91 @@ module.exports = async ({
   const rules = {}
 
   /**
-   * Javascript loader via babel, excludes node_modules
+   * JavaScript loader via babel, includes userland code
+   * and packages that depend on `gatsby`
    */
   {
-    let js = options => {
+    let js = ({ modulesThatUseGatsby = [], ...options } = {}) => {
       return {
-        test: /\.jsx?$/,
-        exclude: vendorRegex,
-        use: [loaders.js(options)],
+        test: /\.(js|mjs|jsx)$/,
+        include: modulePath => {
+          // when it's not coming from node_modules we treat it as a source file.
+          if (!vendorRegex.test(modulePath)) {
+            return true
+          }
+
+          // If the module uses Gatsby as a dependency
+          // we want to treat it as src so we can extract queries
+          return modulesThatUseGatsby.some(module =>
+            modulePath.includes(module.path)
+          )
+        },
+        type: `javascript/auto`,
+        use: [
+          loaders.js({
+            ...options,
+            configFile: true,
+            compact: PRODUCTION,
+          }),
+        ],
       }
     }
 
     rules.js = js
+  }
+
+  /**
+   * Node_modules JavaScript loader via babel
+   * Excludes core-js & babel-runtime to speedup babel transpilation
+   * Excludes modules that use Gatsby since the `rules.js` already transpiles those
+   */
+  {
+    let dependencies = ({ modulesThatUseGatsby = [] } = {}) => {
+      const jsOptions = {
+        babelrc: false,
+        configFile: false,
+        compact: false,
+        presets: [require.resolve(`babel-preset-gatsby/dependencies`)],
+        // If an error happens in a package, it's possible to be
+        // because it was compiled. Thus, we don't want the browser
+        // debugger to show the original code. Instead, the code
+        // being evaluated would be much more helpful.
+        sourceMaps: false,
+        cacheIdentifier: `${stage}---gatsby-dependencies@${
+          require(`babel-preset-gatsby/package.json`).version
+        }`,
+      }
+
+      return {
+        test: /\.(js|mjs)$/,
+        exclude: modulePath => {
+          if (vendorRegex.test(modulePath)) {
+            // If dep uses Gatsby, exclude
+            if (
+              modulesThatUseGatsby.some(module =>
+                modulePath.includes(module.path)
+              )
+            ) {
+              return true
+            }
+            // If dep is babel-runtime or core-js, exclude
+            if (/@babel(?:\/|\\{1,2})runtime|core-js/.test(modulePath)) {
+              return true
+            }
+
+            // If dep is in node_modules and none of the above, include
+            return false
+          }
+
+          // If dep is user land code, exclude
+          return true
+        },
+        type: `javascript/auto`,
+        use: [loaders.dependencies(jsOptions)],
+      }
+    }
+
+    rules.dependencies = dependencies
   }
 
   {
@@ -350,12 +431,23 @@ module.exports = async ({
   }
 
   /**
-   * Loads audio, video, or pdf assets
+   * Loads audio and video and inlines them via a data URI if they are below
+   * the size threshold
+   */
+  rules.media = () => {
+    return {
+      use: [loaders.url()],
+      test: /\.(mp4|webm|ogv|wav|mp3|m4a|aac|oga|flac)$/,
+    }
+  }
+
+  /**
+   * Loads assets without inlining
    */
   rules.miscAssets = () => {
     return {
       use: [loaders.file()],
-      test: /\.(mp4|webm|wav|mp3|m4a|aac|oga|flac|pdf)$/,
+      test: /\.pdf$/,
     }
   }
 
@@ -368,7 +460,10 @@ module.exports = async ({
         loaders.css({ ...options, importLoaders: 1 }),
         loaders.postcss({ browsers }),
       ]
-      if (!isSSR) use.unshift(loaders.miniCssExtract())
+      if (!isSSR)
+        use.unshift(
+          loaders.miniCssExtract({ hmr: !PRODUCTION && !options.modules })
+        )
 
       return {
         use,
@@ -417,25 +512,102 @@ module.exports = async ({
   const plugins = { ...builtinPlugins }
 
   /**
-   * Minify javascript code without regard for IE8. Attempts
+   * Minify JavaScript code without regard for IE8. Attempts
    * to parallelize the work to save time. Generally only add in Production
    */
-  plugins.uglify = ({ uglifyOptions, ...options } = {}) =>
-    new UglifyPlugin({
+  plugins.minifyJs = ({ terserOptions, ...options } = {}) =>
+    new TerserPlugin({
       cache: true,
-      parallel: os.cpus().length - 1,
+      // We can't use parallel in WSL because of https://github.com/gatsbyjs/gatsby/issues/6540
+      // This issue was fixed in https://github.com/gatsbyjs/gatsby/pull/12636
+      parallel: !isWsl,
       exclude: /\.min\.js/,
       sourceMap: true,
-      uglifyOptions: {
-        compress: {
-          drop_console: true,
-        },
-        ecma: 8,
+      terserOptions: {
         ie8: false,
-        ...uglifyOptions,
+        mangle: {
+          safari10: true,
+        },
+        parse: {
+          ecma: 8,
+        },
+        compress: {
+          ecma: 5,
+        },
+        output: {
+          ecma: 5,
+        },
+        ...terserOptions,
       },
       ...options,
     })
+
+  plugins.minifyCss = (
+    options = {
+      cssProcessorPluginOptions: {
+        preset: [
+          `default`,
+          {
+            svgo: {
+              full: true,
+              plugins: [
+                {
+                  // potentially destructive plugins removed - see https://github.com/gatsbyjs/gatsby/issues/15629
+                  // convertShapeToPath: true,
+                  // removeViewBox: true,
+                  removeUselessDefs: true,
+                  addAttributesToSVGElement: true,
+                  addClassesToSVGElement: true,
+                  cleanupAttrs: true,
+                  cleanupEnableBackground: true,
+                  cleanupIDs: true,
+                  cleanupListOfValues: true,
+                  cleanupNumericValues: true,
+                  collapseGroups: true,
+                  convertColors: true,
+                  convertPathData: true,
+                  convertStyleToAttrs: true,
+                  convertTransform: true,
+                  inlineStyles: true,
+                  mergePaths: true,
+                  minifyStyles: true,
+                  moveElemsAttrsToGroup: true,
+                  moveGroupAttrsToElems: true,
+                  prefixIds: true,
+                  removeAttributesBySelector: true,
+                  removeAttrs: true,
+                  removeComments: true,
+                  removeDesc: true,
+                  removeDimensions: true,
+                  removeDoctype: true,
+                  removeEditorsNSData: true,
+                  removeElementsByAttr: true,
+                  removeEmptyAttrs: true,
+                  removeEmptyContainers: true,
+                  removeEmptyText: true,
+                  removeHiddenElems: true,
+                  removeMetadata: true,
+                  removeNonInheritableGroupAttrs: true,
+                  removeOffCanvasPaths: true,
+                  removeRasterImages: true,
+                  removeScriptElement: true,
+                  removeStyleElement: true,
+                  removeTitle: true,
+                  removeUnknownsAndDefaults: true,
+                  removeUnusedNS: true,
+                  removeUselessStrokeAndFill: true,
+                  removeXMLNS: true,
+                  removeXMLProcInst: true,
+                  reusePaths: true,
+                  sortAttrs: true,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+  ) => new OptimizeCssAssetsPlugin(options)
 
   /**
    * Extracts css requires into a single file;
@@ -449,6 +621,11 @@ module.exports = async ({
     })
 
   plugins.moment = () => plugins.ignore(/^\.\/locale$/, /moment$/)
+
+  plugins.extractStats = options => new GatsbyWebpackStatsExtractor(options)
+
+  plugins.eslintGraphqlSchemaReload = options =>
+    new GatsbyWebpackEslintGraphqlSchemaReload(options)
 
   return {
     loaders,
